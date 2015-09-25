@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# Using a regular way
+# 
+# ./scsi3pr start|stop|status|move /dev/sdb
+# 
+# Using as a service:
+#
+# The name of the script shoud be /etc/init.d/scsi3pr_dev_path_to_block_device
+# all "/" need to be replaced by "_"
+# for instance /etc/init.d/scsi3pr_dev_sdf
+# or even /etc/init.d/scsi3pr_dev_disk_by-uuid_4950a1d1-6348-424b-86d8-773aadd34c73
+
+
+start() {
+        if [ $reserve_stat -eq 0 -a "y${res_owner}" != "y${myid}" ]; then
+                /usr/bin/sg_persist --out --register --param-sark=${myid} ${blkdev} > /dev/null 2>&1
+                ERR=$?; if [ $? -ne 0 ]; then exit $ERR; fi
+                /usr/bin/sg_persist --out --no-inquiry --clear --param-rk=${myid} ${blkdev} > /dev/null 2>&1
+                ERR=$?; if [ $? -ne 0 ]; then exit $ERR; fi
+        fi
+        if  [ $reserve_stat -eq 0 -a "y${res_owner}" = "y${myid}" ]; then
+                echo "scsi3 PR is already running..."
+        else
+                /usr/bin/sg_persist --out --register --param-sark=${myid} ${blkdev} > /dev/null 2>&1
+                ERR=$?; if [ $? -ne 0 ]; then exit $ERR; fi
+                /usr/bin/sg_persist --out --reserve --prout-type=1 --param-rk=${myid} ${blkdev} > /dev/null 2>&1
+                ERR=$?; if [ $? -ne 0 ]; then exit $ERR; fi
+                echo "scsi3 PR is started"
+        fi
+}
+
+stop() {
+        if [ $reserve_stat -eq 1 ]; then
+            echo "scsi3 PR is stopped"
+        else
+                /usr/bin/sg_persist --out --release --prout-type=1 --param-rk=${myid} ${blkdev} > /dev/null 2>&1
+                ERR=$?; if [ $? -ne 0 ]; then exit $ERR; fi
+                /usr/bin/sg_persist --out --register --param-rk=${myid} ${blkdev} > /dev/null 2>&1
+                ERR=$?; if [ $? -ne 0 ]; then exit $ERR; fi
+                echo "scsi3 PR is stopped"
+        fi
+}
+
+status() {
+        if [ $reserve_stat -eq 0 -a "y${res_owner}" = "y${myid}" ]; then
+                echo "scsi3 PR is running..."
+        else
+                echo "scsi3 PR is stopped"
+        fi
+}
+
+filename=$0
+tmp=${filename##*scsi3pr}
+blkdev=${tmp//_//}
+myid=`/bin/hostname | /usr/bin/sum -r | /bin/awk '{print $1}'`
+[ -z $blkdev ] && blkdev=$2
+[ -z $blkdev ] && echo "Block device is not set" && exit 255
+read_res=`/usr/bin/sg_persist -r ${blkdev}`
+ERR=$?; if [ $? -ne 0 ]; then exit $ERR; fi
+reserve_stat=`echo $read_res| grep -q 'Reservation follows'; echo $?`
+if [ $reserve_stat -eq 0 ]; then
+        res_owner=`echo $read_res | sed -e 's/.* Key=0x\(.*\) scope.*/\1/g'`
+fi
+
+case "$1" in
+        start)
+                start
+                exit 0
+                ;;
+        stop)
+                stop
+                exit 0
+                ;;
+        status)
+                status
+                exit 3
+                ;;
+        move)
+                start
+                sleep 10
+                stop
+                ;;
+        *)
+                echo $"Usage: $0 {start|stop|statusi|move}"
+                exit 2
+esac
